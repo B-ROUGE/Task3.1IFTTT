@@ -1,0 +1,148 @@
+// Required Libraries
+#include <Wire.h>
+#include <Digital_Light_TSL2561.h>
+#include "RTCZero.h"
+#include <WiFiNINA.h>
+
+// Retrieve SSID and PASS from Secrets tab
+char ssid[] = SECRET_SSID;
+char pass[] = SECRET_PASS; 
+
+// Set light value theshold to '500'
+#define SUNLIGHT_THESHOLD 500
+// Define start and finish hours in 24 hour time (eg, start at 5AM and end at 10PM)
+#define START_HOUR 0
+#define END_HOUR 23
+
+// Create timer
+RTCZero timer;
+// Create WiFI client
+WiFiClient client;
+
+// Set values of IFTTT
+char   HOST_NAME[] = "maker.ifttt.com";
+String PATH_NAME_ACTIVE   = "/trigger/SIT210_sunlight_active/with/key/bsTA0nAnAhy2wXdVbIuu4C";
+String PATH_NAME_INACTIVE   = "/trigger/SIT210_sunlight_inactive/with/key/bsTA0nAnAhy2wXdVbIuu4C";
+String PATH_NAME_TIME   = "/trigger/SIT210_sunlight_time/with/key/bsTA0nAnAhy2wXdVbIuu4C";
+String queryString = "?value1=57&value2=25";
+
+void setup()
+{
+  // Initialize WiFi connection
+  WiFi.begin(ssid, pass);
+  // Initialize Wire
+  Wire.begin();
+  // Initialize Digital Light Sensor
+  TSL2561.init();
+  
+  // Initialize serial and wait for port to open
+  Serial.begin(9600);
+  while (!Serial);
+  delay(1500); 
+
+  // Connect to web server on port 80
+  if (client.connect(HOST_NAME, 80)) 
+  {
+    // if connected:
+    Serial.println("Connected to server");
+  }
+  else 
+  {
+    // If not connected:
+    Serial.println("connection failed");
+  }
+
+  // Start timer
+  timer.begin();
+
+  // Initialise LED_BUILTIN (inbuilt LED) as an output
+  pinMode(LED_BUILTIN, OUTPUT);
+}
+
+void loop()
+{
+  // Declare variables to determine time terrarium is exposed to sunlight
+  int sunlightTime = 0;
+  int sunlightVal;
+  bool sunlightActive = false;
+  int counter = 0;
+
+  // 1 second delay before inital timing condition is checked
+  delay(1000);
+  
+  while (client.connected()) 
+  {
+    // Program will run and detect while within desired time frame
+    if (timer.getHours() >= START_HOUR && timer.getHours() <= END_HOUR)
+    {
+      // Loop will run every second and take a reading. Led will blink once every minute to ensure code is running correctly.
+      counter++;
+      if (counter % 60 == 0)
+      {
+        digitalWrite(LED_BUILTIN, HIGH);
+        delay(1000);
+        digitalWrite(LED_BUILTIN, LOW);
+      }
+      else
+      {
+        delay(1000);
+      }
+
+      // Take reading of current light and act if state has chaged
+      sunlightVal = TSL2561.readVisibleLux();
+      if (sunlightVal >= SUNLIGHT_THESHOLD)
+      {
+        sunlightTime++;
+        if (!sunlightActive)
+        {
+          sunlightActive = true;
+          // Send IFTTT trigger
+          Serial.println("Sending IFTTT Trigger");
+          client.println("GET " + PATH_NAME_ACTIVE + queryString + " HTTP/1.1");
+          client.println("Host: " + String(HOST_NAME));
+          client.println("Connection: close");
+          client.println();
+        }
+      }
+      // If light was present and no longer is send notification
+      else
+      {
+        if (sunlightActive)
+        {
+          sunlightActive = false;
+          // Send IFTTT trigger
+          Serial.println("Sending IFTTT Trigger");
+          client.println("GET " + PATH_NAME_INACTIVE + queryString + " HTTP/1.1");
+          client.println("Host: " + String(HOST_NAME));
+          client.println("Connection: close");
+          client.println();
+        }
+      }
+  
+      if (sunlightTime == 7200)
+      {
+        // Send IFTTT trigger
+        client.println("GET " + PATH_NAME_TIME + queryString + " HTTP/1.1");
+        client.println("Host: " + String(HOST_NAME));
+        client.println("Connection: close");
+        client.println();
+      }
+      
+      // Serial print for testing
+      Serial.print("The current light value is: ");
+      Serial.println(sunlightVal);
+      Serial.print("Total seconds of sunlight gained is: ");
+      Serial.println(sunlightTime);
+      Serial.print("Current time: ");
+      Serial.print(timer.getHours());
+      Serial.print(":");
+      Serial.print(timer.getMinutes());
+      Serial.print(":");
+      Serial.println(timer.getSeconds());
+    }
+  }
+  // The server's disconnected, stop the client
+  client.stop();
+  Serial.println();
+  Serial.println("Disconnected");
+}
